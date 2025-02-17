@@ -14,6 +14,8 @@ import numpy as np
 import random
 import uuid
 import nltk
+import requests
+import tempfile
 nltk.download('punkt')
 
 DEMO_PATH = os.getenv("DEMO_PATH", "./demo")
@@ -22,6 +24,9 @@ MODELS_PATH = os.getenv("MODELS_PATH", "./pretrained_models")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 whisper_model, align_model, voicecraft_model = None, None, None
 _whitespace_re = re.compile(r"\s+")
+
+DEFAULT_TRANSCRIPT = "But when I had approached so near to them The common object, which the sense deceives, Lost not by distance any of its marks,"
+DEFAULT_TARGET = "But when I saw the mirage of the lake in the distance, which the sense deceives, Lost not by distance any of its marks,"
 
 def get_random_string():
     return "".join(str(uuid.uuid4()).split("-"))
@@ -430,172 +435,101 @@ def update_demo(mode, smart_transcript, edit_word_mode, transcript, edit_from_wo
     ]
 
 
-def get_app():
-    with gr.Blocks() as app:
+def edit_audio_server(
+    edit_type,
+    left_margin,
+    right_margin,
+    codec_audio_sr,
+    codec_sr,
+    top_k,
+    top_p,
+    temperature,
+    kvcache,
+    seed,
+    silence_tokens,
+    stop_repetition
+):
+    """
+    Calls the /edit_audio endpoint on the API.
+    Uses the demo audio file by default.
+    """
+    url = "http://127.0.0.1:8000/edit_audio"
+    
+    # Build payload (all values must be strings)
+    payload = {
+        "edit_type": edit_type,
+        "left_margin": str(left_margin),
+        "right_margin": str(right_margin),
+        "codec_audio_sr": str(codec_audio_sr),
+        "codec_sr": str(codec_sr),
+        "top_k": str(top_k),
+        "top_p": str(top_p),
+        "temperature": str(temperature),
+        "kvcache": str(kvcache),
+        "seed": str(seed),
+        "silence_tokens": silence_tokens,
+        "stop_repetition": str(stop_repetition),
+        "use_demo": "true"
+    }
+
+    response = requests.post(url, data=payload)
+    
+    if response.status_code == 200:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            tmp.write(response.content)
+            return tmp.name
+    else:
+        return f"Error: {response.text}"
+
+
+def create_interface():
+    with gr.Blocks() as demo:
+        gr.Markdown(
+            "### Speech Editing Demo\n"
+            "Using default demo audio file with transcripts:\n"
+            f"**Original:** {DEFAULT_TRANSCRIPT}\n"
+            f"**Target:** {DEFAULT_TARGET}\n"
+            "Click **Edit Audio** to generate the edited version."
+        )
+        
         with gr.Row():
-            with gr.Column(scale=2):
-                load_models_btn = gr.Button(value="Load models")
-            with gr.Column(scale=5):
-                with gr.Accordion("Select models", open=False) as models_selector:
-                    with gr.Row():
-                        voicecraft_model_choice = gr.Radio(label="VoiceCraft model", value="830M_TTSEnhanced",
-                                                        choices=["330M", "830M", "330M_TTSEnhanced", "830M_TTSEnhanced"])
-                        whisper_backend_choice = gr.Radio(label="Whisper backend", value="whisperX", choices=["whisperX", "whisper"])
-                        whisper_model_choice = gr.Radio(label="Whisper model", value="base.en",
-                                                        choices=[None, "base.en", "small.en", "medium.en", "large"])
-                        align_model_choice = gr.Radio(label="Forced alignment model", value="whisperX", choices=["whisperX", None])
-
-        with gr.Row():
-            with gr.Column(scale=2):
-                input_audio = gr.Audio(value=f"{DEMO_PATH}/5895_34622_000026_000002.wav", label="Input Audio", type="filepath", interactive=True)
-                with gr.Group():
-                    original_transcript = gr.Textbox(label="Original transcript", lines=5, value=demo_original_transcript,
-                                                    info="Use whisperx model to get the transcript. Fix and align it if necessary.")
-                    with gr.Accordion("Word start time", open=False):
-                        transcript_with_start_time = gr.Textbox(label="Start time", lines=5, interactive=False, info="Start time before each word")
-                    with gr.Accordion("Word end time", open=False):
-                        transcript_with_end_time = gr.Textbox(label="End time", lines=5, interactive=False, info="End time after each word")
-
-                    transcribe_btn = gr.Button(value="Transcribe")
-                    align_btn = gr.Button(value="Align")
-
-            with gr.Column(scale=3):
-                with gr.Group():
-                    transcript = gr.Textbox(label="Text", lines=7, value=demo_text["TTS"]["smart"])
-                    with gr.Row():
-                        smart_transcript = gr.Checkbox(label="Smart transcript", value=True)
-                        with gr.Accordion(label="?", open=False):
-                            info = gr.Markdown(value=smart_transcript_info)
-
-                    with gr.Row():
-                        mode = gr.Radio(label="Mode", choices=["TTS", "Edit", "Long TTS"], value="TTS")
-                        split_text = gr.Radio(label="Split text", choices=["Newline", "Sentence"], value="Newline",
-                                            info="Split text into parts and run TTS for each part.", visible=False)
-                        edit_word_mode = gr.Radio(label="Edit word mode", choices=["Replace half", "Replace all"], value="Replace all",
-                                                info="What to do with first and last word", visible=False)
-
-                    with gr.Group() as tts_mode_controls:
-                        prompt_to_word = gr.Dropdown(label="Last word in prompt", choices=demo_words, value=demo_words[11], interactive=True)
-                        prompt_end_time = gr.Slider(label="Prompt end time", minimum=0, maximum=7.614, step=0.001, value=3.600)
-
-                    with gr.Group(visible=False) as edit_mode_controls:
-                        with gr.Row():
-                            edit_from_word = gr.Dropdown(label="First word to edit", choices=demo_words, value=demo_words[12], interactive=True)
-                            edit_to_word = gr.Dropdown(label="Last word to edit", choices=demo_words, value=demo_words[18], interactive=True)
-                        with gr.Row():
-                            edit_start_time = gr.Slider(label="Edit from time", minimum=0, maximum=7.614, step=0.001, value=4.022)
-                            edit_end_time = gr.Slider(label="Edit to time", minimum=0, maximum=7.614, step=0.001, value=5.768)
-
-                    run_btn = gr.Button(value="Run")
-
-            with gr.Column(scale=2):
-                output_audio = gr.Audio(label="Output Audio")
-                with gr.Accordion("Inference transcript", open=False):
-                    inference_transcript = gr.Textbox(label="Inference transcript", lines=5, interactive=False,
-                                                    info="Inference was performed on this transcript.")
-                with gr.Group(visible=False) as long_tts_sentence_editor:
-                    sentence_selector = gr.Dropdown(label="Sentence", value=None,
-                                                    info="Select sentence you want to regenerate")
-                    sentence_audio = gr.Audio(label="Sentence Audio", scale=2)
-                    rerun_btn = gr.Button(value="Rerun")
-
-        with gr.Row():
-            with gr.Accordion("Generation Parameters - change these if you are unhappy with the generation", open=False):
-                stop_repetition = gr.Radio(label="stop_repetition", choices=[-1, 1, 2, 3, 4], value=3,
-                                        info="if there are long silence in the generated audio, reduce the stop_repetition to 2 or 1. -1 = disabled")
-                sample_batch_size = gr.Number(label="speech rate", value=3, precision=0,
-                                            info="The higher the number, the faster the output will be. "
-                                                "Under the hood, the model will generate this many samples and choose the shortest one. "
-                                                "For giga330M_TTSEnhanced, 1 or 2 should be fine since the model is trained to do TTS.")
-                seed = gr.Number(label="seed", value=-1, precision=0, info="random seeds always works :)")
-                kvcache = gr.Radio(label="kvcache", choices=[0, 1], value=1,
-                                    info="set to 0 to use less VRAM, but with slower inference")
-                left_margin = gr.Number(label="left_margin", value=0.08, info="margin to the left of the editing segment")
-                right_margin = gr.Number(label="right_margin", value=0.08, info="margin to the right of the editing segment")
-                top_p = gr.Number(label="top_p", value=0.9, info="0.9 is a good value, 0.8 is also good")
-                temperature = gr.Number(label="temperature", value=1, info="haven't try other values, do not recommend to change")
-                top_k = gr.Number(label="top_k", value=0, info="0 means we don't use topk sampling, because we use topp sampling")
-                codec_audio_sr = gr.Number(label="codec_audio_sr", value=16000, info='encodec specific, Do not change')
-                codec_sr = gr.Number(label="codec_sr", value=50, info='encodec specific, Do not change')
-                silence_tokens = gr.Textbox(label="silence tokens", value="[1388,1898,131]", info="encodec specific, do not change")
-
-
-        audio_tensors = gr.State()
-        transcribe_state = gr.State(value={"words_info": demo_words_info})
-
-
-        mode.change(fn=update_demo,
-                    inputs=[mode, smart_transcript, edit_word_mode, transcript, edit_from_word, edit_to_word],
-                    outputs=[transcript, edit_from_word, edit_to_word])
-        edit_word_mode.change(fn=update_demo,
-                            inputs=[mode, smart_transcript, edit_word_mode, transcript, edit_from_word, edit_to_word],
-                            outputs=[transcript, edit_from_word, edit_to_word])
-        smart_transcript.change(fn=update_demo,
-                                inputs=[mode, smart_transcript, edit_word_mode, transcript, edit_from_word, edit_to_word],
-                                outputs=[transcript, edit_from_word, edit_to_word])
-
-        load_models_btn.click(fn=load_models,
-                            inputs=[whisper_backend_choice, whisper_model_choice, align_model_choice, voicecraft_model_choice],
-                            outputs=[models_selector])
-
-        input_audio.upload(fn=update_input_audio,
-                        inputs=[input_audio],
-                        outputs=[prompt_end_time, edit_start_time, edit_end_time])
-        transcribe_btn.click(fn=transcribe,
-                            inputs=[seed, input_audio],
-                            outputs=[original_transcript, transcript_with_start_time, transcript_with_end_time,
-                                    prompt_to_word, edit_from_word, edit_to_word, transcribe_state])
-        align_btn.click(fn=align,
-                        inputs=[seed, original_transcript, input_audio],
-                        outputs=[transcript_with_start_time, transcript_with_end_time,
-                                prompt_to_word, edit_from_word, edit_to_word, transcribe_state])
-
-        mode.change(fn=change_mode,
-                    inputs=[mode],
-                    outputs=[tts_mode_controls, edit_mode_controls, edit_word_mode, split_text, long_tts_sentence_editor])
-
-        run_btn.click(fn=run,
-                    inputs=[
-                        seed, left_margin, right_margin,
-                        codec_audio_sr, codec_sr,
-                        top_k, top_p, temperature,
-                        stop_repetition, sample_batch_size,
-                        kvcache, silence_tokens,
-                        input_audio, transcribe_state, transcript, smart_transcript,
-                        mode, prompt_end_time, edit_start_time, edit_end_time,
-                        split_text, sentence_selector, audio_tensors
-                    ],
-                    outputs=[output_audio, inference_transcript, sentence_selector, audio_tensors])
-
-        sentence_selector.change(fn=load_sentence,
-                                inputs=[sentence_selector, codec_audio_sr, audio_tensors],
-                                outputs=[sentence_audio])
-        rerun_btn.click(fn=run,
-                        inputs=[
-                            seed, left_margin, right_margin,
-                            codec_audio_sr, codec_sr,
-                            top_k, top_p, temperature,
-                            stop_repetition, sample_batch_size,
-                            kvcache, silence_tokens,
-                            input_audio, transcribe_state, transcript, smart_transcript,
-                            gr.State(value="Rerun"), prompt_end_time, edit_start_time, edit_end_time,
-                            split_text, sentence_selector, audio_tensors
-                        ],
-                        outputs=[output_audio, inference_transcript, sentence_audio, audio_tensors])
-
-        prompt_to_word.change(fn=update_bound_word,
-                            inputs=[gr.State(False), prompt_to_word, gr.State("Replace all")],
-                            outputs=[prompt_end_time])
-        edit_from_word.change(fn=update_bound_word,
-                            inputs=[gr.State(True), edit_from_word, edit_word_mode],
-                            outputs=[edit_start_time])
-        edit_to_word.change(fn=update_bound_word,
-                            inputs=[gr.State(False), edit_to_word, edit_word_mode],
-                            outputs=[edit_end_time])
-        edit_word_mode.change(fn=update_bound_words,
-                            inputs=[edit_from_word, edit_to_word, edit_word_mode],
-                            outputs=[edit_start_time, edit_end_time])
-    return app
+            with gr.Column():
+                edit_type = gr.Dropdown(
+                    label="Edit Type", 
+                    choices=["substitution", "insertion", "deletion"], 
+                    value="substitution"
+                )
+                left_margin = gr.Number(label="Left Margin", value=0.08)
+                right_margin = gr.Number(label="Right Margin", value=0.08)
+                codec_audio_sr = gr.Number(label="Codec Audio SR", value=16000)
+                codec_sr = gr.Number(label="Codec SR", value=50)
+            
+            with gr.Column():
+                top_k = gr.Number(label="Top k", value=0)
+                top_p = gr.Number(label="Top p", value=0.8)
+                temperature = gr.Number(label="Temperature", value=1.0)
+                kvcache = gr.Number(label="Kvcache", value=0)
+                seed = gr.Number(label="Seed", value=1)
+                silence_tokens = gr.Textbox(
+                    label="Silence Tokens", 
+                    value="1388,1898,131",
+                    info="Comma-separated silence token list"
+                )
+                stop_repetition = gr.Number(label="Stop Repetition", value=-1)
+                
+        edit_button = gr.Button("Edit Audio")
+        output_audio = gr.Audio(label="Edited Audio", type="filepath")
+        
+        edit_button.click(
+            fn=edit_audio_server,
+            inputs=[
+                edit_type, left_margin, right_margin, codec_audio_sr, codec_sr,
+                top_k, top_p, temperature, kvcache, seed, silence_tokens, stop_repetition
+            ],
+            outputs=output_audio
+        )
+        
+    return demo
 
 
 if __name__ == "__main__":
@@ -616,5 +550,5 @@ if __name__ == "__main__":
     TMP_PATH = args.tmp_path
     MODELS_PATH = args.models_path
 
-    app = get_app()
+    app = create_interface()
     app.queue().launch(share=args.share, server_name=args.server_name, server_port=args.port)
