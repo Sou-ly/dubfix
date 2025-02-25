@@ -84,6 +84,8 @@ async def edit_audio(
         logger.info(f"Edit type: {edit_type}")
         logger.info(f"Original transcript: {original_transcript}")
         logger.info(f"Target transcript: {target_transcript}")
+        logger.info(f"Parameters: left_margin={left_margin}, right_margin={right_margin}, codec_audio_sr={codec_audio_sr}, codec_sr={codec_sr}")
+        logger.info(f"Parameters: top_k={top_k}, top_p={top_p}, temperature={temperature}, kvcache={kvcache}, seed={seed}, stop_repetition={stop_repetition}")
         
         # Set random seed
         logger.info(f"Setting random seed: {seed}")
