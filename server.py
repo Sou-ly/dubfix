@@ -214,12 +214,6 @@ def seed_everything(seed: int = 1) -> None:
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
-def load_model(model_name: str = "giga330M.pth", device: str = "cuda"):
-    """Load the VoiceCraft model."""
-    model = voicecraft.VoiceCraft.from_pretrained(f"pyp1/VoiceCraft_{model_name.replace('.pth', '')}")
-    model.to(device)
-    return model
-
 def setup_tokenizers(encodec_path: str = "./pretrained_models/encodec_4cb2048_giga.th") -> Tuple[AudioTokenizer, TextTokenizer]:
     """Setup audio and text tokenizers."""
     if not os.path.exists(encodec_path):
